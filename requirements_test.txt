@@ -1,0 +1,4 @@
+-r requirements.txt
+
+moto[ec2]==4.1.10
+pytest>=7.2
