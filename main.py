@@ -1,4 +1,6 @@
 import sys
+from optparse import Values
+import time
 import boto3
 from typing import List
 
@@ -36,6 +38,8 @@ def parser_args(args: List) -> Namespace:
                         help='List all EC2 instances')
     parser.add_argument('-d', '--destroy', action='store_true',
                         help='Destroy an existing EC2 instance')
+    parser.add_argument('-i', '--instance-id', type=str,
+                        help='Instance ID EC2')
     return parser.parse_args(args)
 
 
@@ -97,7 +101,8 @@ def create_ec2_instance(ec2_client, ec2_resource, params: EC2InstanceParams):
     if not exist_security_group(ec2_client, params.security_group_name):
         security_group_id = create_security_group(ec2_client, params.security_group_name)
         print(f"Created security group with ID: {security_group_id}")
-
+    else:
+        print(f"Security group already exists")
     response = ec2_resource.create_instances(
         ImageId=params.ami_id,
         MinCount=1,
@@ -123,6 +128,43 @@ def create_ec2_instance(ec2_client, ec2_resource, params: EC2InstanceParams):
     return response.id, response.public_ip_address, response.instance_type
 
 
+def list_instances(ec2_client):
+    instances_info = []
+
+    response = ec2_client.describe_instances()
+    for reservation in response['Reservations']:
+        for instance in reservation['Instances']:
+            instance_name = 'N/A'
+            for tag in instance.get('Tags', []):
+                if tag['Key'] == 'Name':
+                    instance_name = tag['Value']
+                    break
+            instance_id = instance['InstanceId']
+            instance_type = instance['InstanceType']
+            public_ip = instance.get('PublicIpAddress', 'N/A')
+
+            security_group_names = [sg['GroupName'] for sg in instance['SecurityGroups']]
+            instance_info = {
+                'InstanceId': instance_id,
+                'InstanceType': instance_type,
+                'PublicIpAddress': public_ip,
+                'SecurityGroupNames': security_group_names,
+                'Name': instance_name
+            }
+            instances_info.append(instance_info)
+    return instances_info
+
+
+def delete_ec2_instance(ec2_client, instance_id):
+    ec2_client.terminate_instances(InstanceIds=[instance_id])
+    print(f"Termination request sent for instance {instance_id}")
+
+    waiter = ec2_client.get_waiter('instance_terminated')
+    print(f"Waiting for instance {instance_id} to be fully terminated...")
+    waiter.wait(InstanceIds=[instance_id])
+    print(f"Instance {instance_id} has been terminated.")
+
+
 def main(args: list):
     parsed_args = parser_args(args)
     ec2_client = create_ec2_client('us-east-1')
@@ -140,6 +182,17 @@ def main(args: list):
         instance_id, public_ip, instance_type = create_ec2_instance(ec2_client, ec2_resource, params)
         print(f"Created EC2 instance with ID: {instance_id} Public IP: {public_ip} "
               f" Type of instance: {instance_type}")
+    elif parsed_args.list:
+        instances = list_instances(ec2_client)
+        for instance in instances:
+            print(f"Name Instance: {instance['Name']}")
+            print(f"ID Instance: {instance['InstanceId']}")
+            print(f"IP Public Instance: {instance['PublicIpAddress']}")
+            print(f"Instance Type: {instance['InstanceType']}")
+            print(f"Group Security Instance: {instance['SecurityGroupNames']}")
+            print(f"*---------------------------------------------*")
+    elif parsed_args.destroy and parsed_args.instance_id:
+        delete_ec2_instance(ec2_client, parsed_args.instance_id)
     else:
         print("Invalid input: Use -h or --hel for see the instructions ")
 
